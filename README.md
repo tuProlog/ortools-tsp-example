@@ -41,7 +41,7 @@ enumerates all the the minimally-`Cost`ly `Circuit`s involving all non-empty sub
 
 ### Prerequisites
 
-- Java 11+
+- JDK 11+
 - \[Optionally\] Gradle 6.7+
 - \[Alternatively\] Docker
 
@@ -77,3 +77,16 @@ assert(path(city3, city4, cost34)).
 ```
 
 0. Terminate the interpreter by querying `halt.`, or simply by pressing  <kbd>Ctrl</kbd>+ <kbd>D</kbd>
+
+### In case of issues, try using Docker
+
+1. You may dockerify this demo on your own machine by running:
+```bash
+docker build . -t pikalab/demos:2p-kt-tsp  
+```
+
+2. Then you may then start the dockerified interpreter by running:
+```bash
+docker run -it --rm pikalab/demos:2p-kt-tsp
+```
+(In presence of an Internet connection this step may also work without requiring the previous one, as the image `pikalab/demos:2p-kt-tsp` is publicly available on DockerHub)
