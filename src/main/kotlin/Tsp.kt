@@ -1,8 +1,5 @@
 import com.google.ortools.Loader
-import com.google.ortools.constraintsolver.Assignment
-import com.google.ortools.constraintsolver.FirstSolutionStrategy
-import com.google.ortools.constraintsolver.RoutingIndexManager
-import com.google.ortools.constraintsolver.RoutingModel
+import com.google.ortools.constraintsolver.*
 import com.google.ortools.constraintsolver.main.defaultRoutingSearchParameters
 import it.unibo.tuprolog.core.*
 import it.unibo.tuprolog.core.List as LogicList
@@ -20,9 +17,16 @@ import java.util.function.LongBinaryOperator
 
 object Tsp : TernaryRelation<ExecutionContext>("tsp") {
 
+    private val ROUTING_PARAMS: RoutingSearchParameters
+
     init {
         Loader.loadNativeLibraries()
+        ROUTING_PARAMS = defaultRoutingSearchParameters().toBuilder()
+            .setFirstSolutionStrategy(FirstSolutionStrategy.Value.PATH_CHEAPEST_ARC)
+            .build()
     }
+
+    private fun <A, B, C> Pair<B, C>.addLeft(item: A): Triple<A, B, C> = Triple(item, first, second)
 
     private class CitiesIndexer(private val cities: List<Term>) : RoutingIndexManager(cities.size, 1, 0) {
         operator fun get(index: Long): Term = cities[indexToNode(index)]
@@ -39,7 +43,8 @@ object Tsp : TernaryRelation<ExecutionContext>("tsp") {
                 ?: Long.MAX_VALUE
         }
 
-    private fun Assignment.toCircuit(model: RoutingModel, indexer: CitiesIndexer): Pair<LogicList, Integer> {
+    private fun Assignment?.toCircuit(model: RoutingModel, indexer: CitiesIndexer): Pair<LogicList, Integer> {
+        if (this == null) return (LogicList.empty() to Integer.MINUS_ONE)
         var cost: Long = 0
         val circuit = mutableListOf<Term>()
         var index = model.start(0)
@@ -53,6 +58,23 @@ object Tsp : TernaryRelation<ExecutionContext>("tsp") {
         return LogicList.of(circuit) to Integer.of(cost)
     }
 
+    private fun Request<ExecutionContext>.newRoutingModel(indexer: CitiesIndexer): RoutingModel =
+        RoutingModel(indexer).also {
+            it.setArcCostEvaluatorOfAllVehicles(it.registerTransitCallback(distances(indexer)))
+        }
+
+    private fun Request<ExecutionContext>.tsp(cities: List<Term>): Sequence<Pair<LogicList, Integer>> = sequence {
+        for (citiesPermutations in cities.permutations()) {
+            val indexer = CitiesIndexer(citiesPermutations)
+            val model = newRoutingModel(indexer)
+            val solution = model.solveWithParameters(ROUTING_PARAMS)
+            if (model.status() == RoutingModel.ROUTING_SUCCESS) {
+                val (circuit, cost) = solution.toCircuit(model, indexer)
+                yield(circuit to cost)
+            }
+        }
+    }.distinct()
+
     override fun Request<ExecutionContext>.computeAll(first: Term, second: Term, third: Term): Sequence<Response> {
         val allCities = solve(Struct.template("path", 3))
             .filterIsInstance<Solution.Yes>()
@@ -60,22 +82,13 @@ object Tsp : TernaryRelation<ExecutionContext>("tsp") {
             .flatMap { sequenceOf(it[0], it[1]) }
             .toSet()
 
-        return allCities.subsets().flatMap { it.permutations() }
+        return allCities.subsets()
+            .flatMap { it.permutations() }
             .map { it to (Set.of(it) mguWith first) }
             .filter { (cities, substitution) -> cities.isNotEmpty() && substitution is Unifier }
-            .map { (cities, substitution) ->
-                val indexer = CitiesIndexer(cities)
-                val model = RoutingModel(indexer)
-                model.setArcCostEvaluatorOfAllVehicles(model.registerTransitCallback(distances(indexer)))
-                val searchParameters = defaultRoutingSearchParameters().toBuilder()
-                    .setFirstSolutionStrategy(FirstSolutionStrategy.Value.PATH_CHEAPEST_ARC)
-                    .build()
-                val solution = model.solveWithParameters(searchParameters)
-                val (circuit, cost) = solution?.toCircuit(model, indexer) ?: (LogicList.empty() to Integer.MINUS_ONE)
-                Triple(substitution, circuit, cost)
-            }.filter { (_, _, cost) -> cost.value >= BigInteger.ZERO }
-            .map { (substitution, circuit, cost) ->
-                replyWith(substitution + (second mguWith circuit) + (third mguWith cost))
-            }
+            .flatMap { (cities, substitution) -> tsp(cities).map { it.addLeft(substitution) } }
+            .map { (substitution, circuit, cost) -> substitution + (second mguWith circuit) + (third mguWith cost) }
+            .filterIsInstance<Unifier>()
+            .map { replySuccess(it) } + replyFail()
     }
 }

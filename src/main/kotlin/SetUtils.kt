@@ -11,7 +11,3 @@ fun <T> Set<T>.subsets(): Sequence<Set<T>> = sequence {
         }
     }
 }
-
-fun main(args: Array<String>) {
-    setOf(emptySet<Any>()).subsets().forEach(::println)
-}
